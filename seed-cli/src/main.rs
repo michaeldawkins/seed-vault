@@ -26,7 +26,11 @@ Usage:
   seed mandate withdraw MANDATE_ID
   seed status-list [--out FILE]     write the signed withdrawal list to publish
   seed chain MANDATE_ID             print the cards an agent shows at a door
+  seed visit --door URL --mandate ID --org ORG --action ACTION
+             [--amount EUROS] [--details FILE.json]
+                                    act as the agent: knock, answer, keep the receipt
   seed show                         what is in the vault, in plain words
+  seed owner-card                   print your owner identity card, to register at a door
   seed receipts                     every receipt this vault keeps
   seed demo                         run the whole story once, in memory
   seed conformance                  run the shared test cases on the reference door
@@ -239,6 +243,12 @@ fn run(raw: Vec<String>) -> Result<(), String> {
             );
         }
         Some("show") => show(&load()?),
+        Some("owner-card") => println!("{}", load()?.owner.identity_card),
+        Some("visit") => {
+            let mut vault = load()?;
+            visit(&mut vault, &args)?;
+            vault.save(&path).map_err(e)?;
+        }
         Some("receipts") => {
             for r in &load()?.receipts {
                 let r = &r.receipt;
@@ -263,6 +273,70 @@ fn run(raw: Vec<String>) -> Result<(), String> {
         }
         Some(other) => return Err(format!("unknown command '{other}'; try `seed help`")),
     }
+    Ok(())
+}
+
+/// The agent side of the handshake against a door's HTTP routes.
+fn visit(vault: &mut Vault, args: &Args) -> Result<(), String> {
+    let door = args.need("door")?.trim_end_matches('/');
+    let org = args.need("org")?;
+    let amount_cents = match args.flag("amount") {
+        Some(v) => Some(
+            (v.parse::<f64>()
+                .map_err(|_| "--amount must be a number of euros")?
+                * 100.0)
+                .round() as i64,
+        ),
+        None => None,
+    };
+    let details = match args.flag("details") {
+        Some(file) => {
+            serde_json::from_str(&std::fs::read_to_string(file).map_err(|e| e.to_string())?)
+                .map_err(|e| format!("{file}: {e}"))?
+        }
+        None => json!({}),
+    };
+    let post = |route: &str, body: serde_json::Value| -> Result<serde_json::Value, String> {
+        match ureq::post(&format!("{door}{route}")).send_json(body) {
+            Ok(r) => r.into_json().map_err(|e| e.to_string()),
+            Err(ureq::Error::Status(_, r)) => {
+                let v: serde_json::Value = r.into_json().unwrap_or_default();
+                Err(format!(
+                    "the door said no: {}",
+                    v["error"].as_str().unwrap_or("unknown")
+                ))
+            }
+            Err(e) => Err(format!("could not reach the door: {e}")),
+        }
+    };
+    let challenge: seed_core::presentation::Challenge = serde_json::from_value(post(
+        "/api/seed/challenge",
+        json!({"organization_id": org}),
+    )?)
+    .map_err(|e| e.to_string())?;
+    let request = Request {
+        action: args.need("action")?.into(),
+        organisation: org.into(),
+        amount_cents,
+        details,
+    };
+    let answer = vault
+        .answer(args.need("mandate")?, &challenge, request, Utc::now())
+        .map_err(|e| e.to_string())?;
+    let visit = post("/api/seed/present", json!({"presentation": answer}))?;
+    let receipt: seed_core::receipt::Receipt =
+        serde_json::from_value(visit["receipt"].clone()).map_err(|e| e.to_string())?;
+    let signed = visit["signed_receipt"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    println!("{:?}: {}", receipt.outcome, receipt.reason);
+    if let Some(record) = &receipt.record {
+        println!("record: {record}");
+    }
+    vault
+        .keep_receipt(seed_core::receipt::SignedReceipt { receipt, signed })
+        .map_err(|e| format!("the door's receipt did not check out: {e}"))?;
     Ok(())
 }
 

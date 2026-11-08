@@ -1,0 +1,15 @@
+[package]
+name = "seed-cli"
+description = "The standalone Seed Vault command-line holder."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "seed"
+path = "src/main.rs"
+
+[dependencies]
+seed-core = { path = "../seed-core" }
+serde_json = "1"
+chrono = "0.4"

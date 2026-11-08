@@ -102,4 +102,4 @@ Slice 1 counts as **proven** when a real agent on the Mac mini drafts an invoice
 ## Sources
 
 - Design: the three design docs of 01-11 and 07-11-2026 in the project files (module design, agent keys and standalone build, Slice 0)
-- Build: [seed-vault PR #1](https://github.com/michaeldawkins/seed-vault/pull/1) (the README in this repository, "Status" and "Not done yet"), [ledger-desk-ecosystem PR #3](https://github.com/michaeldawkins/ledger-desk-ecosystem/pull/3) (Seed door module and end-to-end test)
+- Build: [seed-vault PR #1](https://github.com/michaeldawkins/seed-vault/pull/1) (its README, "Status" and "Not done yet"), [ledger-desk-ecosystem PR #3](https://github.com/michaeldawkins/ledger-desk-ecosystem/pull/3) (Seed door module and end-to-end test)

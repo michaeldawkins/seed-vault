@@ -1,22 +1,22 @@
 # Seed Vault: overview
 
-08-11-2026 · Michael (with Claude)
+08-11-2026 · updated 09-11-2026 · Michael (with Claude)
 
 A personal vault for one holder, a person or an agent. It hands out signed **cards** instead of raw data, so any organisation can check who someone is and what they may do, without ever owning their information. Seed Vault is its own open-source product (Apache 2.0). It plugs into Ledger Desk, and into any other receiver, only through the open card format and one handshake. No shared database, no shared login.
 
-**Where we are today:** Slice 1, *agent mandate cards*, is **built and tested, not running for real**. An owner can sign a card that says what one of their agents may do, a receiver checks it, both sides keep a receipt, and the owner can pull the card back. All 17 shared test cases pass, both in Seed Vault and in Ledger Desk's door. Keys are still software keys, so nothing here is safe to use with real money or real clients yet.
+**Where we are today (09-11-2026):** Slice 1, *agent mandate cards*, is **built, tested and merged** into both projects, **not yet running for real**. An owner can sign a card that says what one of their agents may do, an agent can knock on Ledger Desk's door over a web route, the door checks it, both sides keep a receipt, and the owner can pull the card back. All 17 shared test cases pass, both in Seed Vault and in Ledger Desk's door. Agent keys can now live in the Mac mini's security chip (tested on the mini on 09-11-2026), but the owner's own key is still a software key, so nothing here is safe to use with real money or real clients yet.
 
 ## Status at a glance
 
 | | State | What I checked |
 | --- | --- | --- |
 | **Designed** | Yes, the whole vault | Design docs of 01-11 and 07-11-2026 in the project files |
-| **Built** | Slice 1 only: the agent mandate cards | seed-vault draft PR #1 (24 files) and ledger-desk-ecosystem draft PR #3 |
-| **Tested** | 17 of 17 shared cases pass, in both projects | Automatic checks (CI, the robot that reruns the tests on every change) are green on both PRs as of 08-11-2026 |
-| **Running for real** | **No** | Software keys only, withdrawal list not published anywhere, no web route into Ledger Desk |
-| **Proven with a real agent** | **No** | Needs an agent key in the Mac mini's security chip and a live door in Ledger Desk |
+| **Built** | Slice 1: the agent mandate cards, the agent side of a visit, the Secure Enclave helper, and in Ledger Desk the door, its web route and its admin screen | seed-vault PRs #1, #3 and #4; ledger-desk-ecosystem PRs #3 and #4, all merged 09-11-2026 |
+| **Tested** | 17 of 17 shared cases pass, in both projects, plus tests for the web route, admin screen and hardware keys | The PR descriptions and the seed-vault README; automatic checks (CI, the robot that reruns the tests on every change) were green on the first PRs on 08-11-2026 |
+| **Running for real** | **No** | The owner key is still a software key, the withdrawal list is not published anywhere, and the door is off by default and only reachable from the same machine |
+| **Proven with a real agent** | **Partly** | The Mac mini's chip signs and the tests pass with it. A full live visit by a chip-held agent to a running Ledger Desk door is still to do |
 
-Both PRs are still drafts, so none of this is in the main version of either project yet.
+All of this is now in the main version of both projects. The Seed door stays switched off for every organisation until someone turns it on, so Ledger Desk's pilot is not affected.
 
 ## The idea in three rules
 
@@ -52,8 +52,9 @@ flowchart LR
 | --- | --- | --- | --- |
 | **seed-core** | The shared library: card formats, signing, withdrawal lists, the door's checks, receipts, the vault file and the shared test cases | seed-vault repository | Built, tested |
 | **seed command** | A command-line tool for owners: set up a vault, add an agent, issue or withdraw a mandate, see receipts, run a demo | seed-vault repository | Built, tested |
-| **Seed door** | A Ledger Desk module that checks cards and lets agents read invoices and draft new ones. Off by default for every organisation, with its own storage | Ledger Desk (draft PR #3) | Built, tested |
-| **Holder service for agents** | A small service next to an agent, with its key in a security chip | Not started | Designed |
+| **Seed door** | A Ledger Desk module that checks cards and lets agents read invoices and draft new ones. Off by default for every organisation, with its own storage | Ledger Desk | Built, tested |
+| **Web route and admin screen** | The route an outside agent knocks on, and a Seed door tab where managers switch it on, accept owners and read receipts | Ledger Desk | Built, tested; same machine only for now |
+| **Agent kits and the Secure Enclave helper** | An agent carries its cards with no secrets; its key stays in the Mac's security chip, which signs but never hands the key out | seed-vault repository | Built, tested on the Mac mini |
 | **Holder app for people** | The phone app for a person's own vault | Not started | Designed |
 
 ## Rules the code already enforces
@@ -67,10 +68,12 @@ flowchart LR
 
 In order of what makes it real:
 
-1. **Hardware keys.** Agent keys must live in a security chip (the Mac mini's Secure Enclave first) that can sign but never hand the key out. The code is ready to plug one in; no such signer is written.
-2. **A web route for outside agents.** Ledger Desk's door has no route yet through which an outside agent can knock (the MCP door). Today the checks run only inside tests.
-3. **An admin screen.** A place in Ledger Desk to switch the Seed door on per organisation, accept an owner and read receipts.
-4. **A published withdrawal list** at a real address.
+Done on 09-11-2026: agent keys in the Mac mini's security chip, the web route for outside agents, and the admin screen.
+
+1. **A live end-to-end visit** by the chip-held agent to a running Ledger Desk door. This is what turns "partly proven" into "proven".
+2. **The owner key in hardware too.** Today the owner's key is a software key in the vault file.
+3. **A published withdrawal list** at a real address.
+4. **A network decision.** The door only listens on the same machine; agents elsewhere need a deliberate choice about how to reach it safely.
 5. **Owner key recovery** through trusted people. Needed before any real use.
 6. **An outside check** of the card formats against the official W3C test suites.
 7. **Build cards** (proof of exactly which program and model an agent runs). Optional for now.
@@ -80,11 +83,12 @@ Slice 1 counts as **proven** when a real agent on the Mac mini drafts an invoice
 ## Roadmap
 
 1. **Slice 0, on paper:** card catalogue, handshake, threat list, 15 test cases. *Done 07-11-2026.*
-2. **Slice 1, agent mandate cards:** *built and tested 08-11-2026; hardware keys, web route and admin screen still to come.*
+2. **Slice 1, agent mandate cards:** *built and tested 08-11-2026; agent hardware keys, web route and admin screen added and merged 09-11-2026. A live end-to-end run still to come.*
+   - **Agent payments with a capped budget:** *designed on paper 08-11-2026* (purchasing agents, per-organisation settings with strong sign-in, and stablecoins for small payments between agents). Paying stays blocked in the code until this is built.
 3. **Slice 2, person sign-in:** log in with an EU government wallet and carry a verified identity card. Waits for the Dutch NL Wallet or another usable EU wallet.
 4. **Slice 3, the holder app** for people, and the rest of the person vault: professional cards, assessment summaries, lending with expiry, reference cards when someone leaves.
 
-**An honest note on timing:** on 07-11-2026 the plan was paper only until 29-01-2027, so Ledger Desk's 90-day pilot keeps your attention. Slice 1 was built on 08-11-2026, ahead of that date. It sits safely in draft PRs, but the remaining steps above are real work that competes with the pilot. Worth deciding whether they wait until after 29-01-2027.
+**An honest note on timing:** on 07-11-2026 the plan was paper only until 29-01-2027, so Ledger Desk's 90-day pilot keeps your attention. Slice 1 was built on 08-11-2026 and merged on 09-11-2026, ahead of that date. It is switched off by default, so the pilot is untouched, but the remaining steps above are real work that competes with the pilot. Worth deciding whether they wait until after 29-01-2027.
 
 ## What we deliberately do not build
 
@@ -102,4 +106,4 @@ Slice 1 counts as **proven** when a real agent on the Mac mini drafts an invoice
 ## Sources
 
 - Design: the three design docs of 01-11 and 07-11-2026 in the project files (module design, agent keys and standalone build, Slice 0)
-- Build: [seed-vault PR #1](https://github.com/michaeldawkins/seed-vault/pull/1) (its README, "Status" and "Not done yet"), [ledger-desk-ecosystem PR #3](https://github.com/michaeldawkins/ledger-desk-ecosystem/pull/3) (Seed door module and end-to-end test)
+- Build: [seed-vault PR #1](https://github.com/michaeldawkins/seed-vault/pull/1) (its README, "Status" and "Not done yet"), [ledger-desk-ecosystem PR #3](https://github.com/michaeldawkins/ledger-desk-ecosystem/pull/3) (Seed door module and end-to-end test), plus seed-vault PRs #3 and #4 and ledger-desk-ecosystem PR #4 (agent visits, hardware keys, web route and admin screen)

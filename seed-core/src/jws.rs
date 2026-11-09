@@ -15,7 +15,7 @@ pub fn sign(signer: &dyn Signer, typ: &str, payload: &Value) -> Result<String> {
         b64::encode(serde_json::to_string(&header)?.as_bytes()),
         b64::encode(serde_json::to_string(payload)?.as_bytes())
     );
-    let signature = signer.sign(signing_input.as_bytes());
+    let signature = signer.sign(signing_input.as_bytes())?;
     Ok(format!("{signing_input}.{}", b64::encode(&signature)))
 }
 

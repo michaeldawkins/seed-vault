@@ -8,11 +8,11 @@ use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use seed_core::cards::{verify_kind, AgentSubject, CardKind, Limits, MandateSubject};
 use seed_core::conformance::{self, memory::MemoryHarness, Harness};
 use seed_core::door::{euro, Door};
-use seed_core::keys::SoftwareKey;
-use seed_core::presentation::Request;
-use seed_core::receipt::Outcome;
+use seed_core::keys::{ExternalSigner, Signer, SoftwareKey};
+use seed_core::presentation::{Challenge, Request};
+use seed_core::receipt::{Outcome, SignedReceipt};
 use seed_core::reference::MemoryStores;
-use seed_core::vault::{MandateTerms, Vault};
+use seed_core::vault::{AgentKit, MandateTerms, Vault};
 use serde_json::json;
 
 const HELP: &str = "seed — Seed Vault holder (Slice 1: agent mandate cards)
@@ -20,6 +20,11 @@ const HELP: &str = "seed — Seed Vault holder (Slice 1: agent mandate cards)
 Usage:
   seed init --name NAME --country CC --law LAW [--status-url URL]
   seed agent add NAME --model MODEL --machine MACHINE [--built-by WHO]
+                 [--key-did DID]    the agent key lives in hardware; give its identifier
+  seed key-id --signer PROGRAM --key-file FILE
+                                    print the identifier of a hardware agent key
+  seed agent export NAME --out KIT.json
+                                    the agent's kit: its cards, no secrets
   seed mandate issue AGENT --org ORG --may-do a,b [--may-never c,d]
                      [--max-per-day N] [--max-amount EUROS] --purpose TEXT
                      --from DD-MM-YYYY --until DD-MM-YYYY
@@ -28,7 +33,10 @@ Usage:
   seed chain MANDATE_ID             print the cards an agent shows at a door
   seed visit --door URL --mandate ID --org ORG --action ACTION
              [--amount EUROS] [--details FILE.json]
-                                    act as the agent: knock, answer, keep the receipt
+             [--kit KIT.json --signer PROGRAM --key-file FILE]
+                                    act as the agent: knock, answer, keep the receipt.
+                                    With --kit, the agent key signs through a hardware
+                                    helper (such as seed-enclave) and no vault is needed.
   seed show                         what is in the vault, in plain words
   seed owner-card                   print your owner identity card, to register at a door
   seed receipts                     every receipt this vault keeps
@@ -39,7 +47,8 @@ Options:
   --vault PATH   vault file (default: $SEED_VAULT or ./seed-vault.json)
 
 Keys in the vault file are software keys, fine for trying things out.
-Real use needs the owner key on a phone chip and agent keys in a Secure Enclave.";
+Agent keys can already live in a Secure Enclave (see enclave/README.md).
+The owner key on a phone chip comes later.";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -156,25 +165,48 @@ fn run(raw: Vec<String>) -> Result<(), String> {
                 vault.owner.did
             );
         }
-        Some("agent") if args.word(1, "agent command")? == "add" => {
-            let mut vault = load()?;
-            let name = args.word(2, "agent name")?.to_string();
-            let built_by = args
-                .flag("built-by")
-                .unwrap_or(&vault.owner.name)
-                .to_string();
-            let agent = vault
-                .add_agent(
-                    &name,
-                    &built_by,
-                    args.need("model")?,
-                    args.need("machine")?,
-                    now,
-                )
-                .map_err(e)?;
-            println!("Agent '{name}' added. Its identifier: {}", agent.did);
-            vault.save(&path).map_err(e)?;
-        }
+        Some("agent") => match args.word(1, "agent command")? {
+            "add" => {
+                let mut vault = load()?;
+                let name = args.word(2, "agent name")?.to_string();
+                let built_by = args
+                    .flag("built-by")
+                    .unwrap_or(&vault.owner.name)
+                    .to_string();
+                let model = args.need("model")?;
+                let machine = args.need("machine")?;
+                let agent = match args.flag("key-did") {
+                    Some(did) => vault
+                        .add_external_agent(&name, did, &built_by, model, machine, now)
+                        .map_err(e)?,
+                    None => vault
+                        .add_agent(&name, &built_by, model, machine, now)
+                        .map_err(e)?,
+                };
+                let where_key = if agent.secret.is_some() {
+                    "a software key in this vault"
+                } else {
+                    "its own hardware key"
+                };
+                println!(
+                    "Agent '{name}' added, with {where_key}. Its identifier: {}",
+                    agent.did
+                );
+                vault.save(&path).map_err(e)?;
+            }
+            "export" => {
+                let vault = load()?;
+                let name = args.word(2, "agent name")?;
+                let out = args.need("out")?;
+                let kit = vault.export_kit(name, now).map_err(e)?;
+                kit.save(std::path::Path::new(out)).map_err(e)?;
+                println!(
+                    "Kit for '{name}' written to {out}: {} live mandate(s), no secrets.",
+                    kit.mandates.len()
+                );
+            }
+            other => return Err(format!("unknown agent command '{other}'")),
+        },
         Some("mandate") => match args.word(1, "mandate command")? {
             "issue" => {
                 let mut vault = load()?;
@@ -242,13 +274,46 @@ fn run(raw: Vec<String>) -> Result<(), String> {
                 serde_json::to_string_pretty(&json!({"cards": cards})).expect("json")
             );
         }
+        Some("key-id") => {
+            let signer =
+                ExternalSigner::open(args.need("signer")?, args.need("key-file")?).map_err(e)?;
+            println!("{}", signer.did());
+        }
         Some("show") => show(&load()?),
         Some("owner-card") => println!("{}", load()?.owner.identity_card),
-        Some("visit") => {
-            let mut vault = load()?;
-            visit(&mut vault, &args)?;
-            vault.save(&path).map_err(e)?;
-        }
+        Some("visit") => match args.flag("kit") {
+            Some(kit_path) => {
+                let kit = AgentKit::load(std::path::Path::new(kit_path)).map_err(e)?;
+                let signer = ExternalSigner::open(args.need("signer")?, args.need("key-file")?)
+                    .map_err(e)?;
+                let mandate = args.need("mandate")?;
+                let receipt = visit(&args, |challenge, request| {
+                    kit.answer(&signer, mandate, challenge, request, Utc::now())
+                        .map_err(|e| e.to_string())
+                })?;
+                let log = format!("{kit_path}.receipts.jsonl");
+                let mut line = serde_json::to_string(&receipt).expect("json");
+                line.push('\n');
+                use std::io::Write;
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log)
+                    .and_then(|mut f| f.write_all(line.as_bytes()))
+                    .map_err(|e| format!("could not keep the receipt in {log}: {e}"))?;
+            }
+            None => {
+                let mut vault = load()?;
+                let mandate = args.need("mandate")?.to_string();
+                let receipt = visit(&args, |challenge, request| {
+                    vault
+                        .answer(&mandate, challenge, request, Utc::now())
+                        .map_err(|e| e.to_string())
+                })?;
+                vault.keep_receipt(receipt).map_err(e)?;
+                vault.save(&path).map_err(e)?;
+            }
+        },
         Some("receipts") => {
             for r in &load()?.receipts {
                 let r = &r.receipt;
@@ -276,8 +341,12 @@ fn run(raw: Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
-/// The agent side of the handshake against a door's HTTP routes.
-fn visit(vault: &mut Vault, args: &Args) -> Result<(), String> {
+/// The agent side of the handshake against a door's HTTP routes. Returns the
+/// door's receipt, already checked against the door's signature.
+fn visit(
+    args: &Args,
+    answer: impl FnOnce(&Challenge, Request) -> Result<String, String>,
+) -> Result<SignedReceipt, String> {
     let door = args.need("door")?.trim_end_matches('/');
     let org = args.need("org")?;
     let amount_cents = match args.flag("amount") {
@@ -309,7 +378,7 @@ fn visit(vault: &mut Vault, args: &Args) -> Result<(), String> {
             Err(e) => Err(format!("could not reach the door: {e}")),
         }
     };
-    let challenge: seed_core::presentation::Challenge = serde_json::from_value(post(
+    let challenge: Challenge = serde_json::from_value(post(
         "/api/seed/challenge",
         json!({"organization_id": org}),
     )?)
@@ -320,9 +389,7 @@ fn visit(vault: &mut Vault, args: &Args) -> Result<(), String> {
         amount_cents,
         details,
     };
-    let answer = vault
-        .answer(args.need("mandate")?, &challenge, request, Utc::now())
-        .map_err(|e| e.to_string())?;
+    let answer = answer(&challenge, request)?;
     let visit = post("/api/seed/present", json!({"presentation": answer}))?;
     let receipt: seed_core::receipt::Receipt =
         serde_json::from_value(visit["receipt"].clone()).map_err(|e| e.to_string())?;
@@ -334,10 +401,12 @@ fn visit(vault: &mut Vault, args: &Args) -> Result<(), String> {
     if let Some(record) = &receipt.record {
         println!("record: {record}");
     }
-    vault
-        .keep_receipt(seed_core::receipt::SignedReceipt { receipt, signed })
+    let (_, checked) = seed_core::receipt::Receipt::verify(&signed)
         .map_err(|e| format!("the door's receipt did not check out: {e}"))?;
-    Ok(())
+    if checked != receipt {
+        return Err("the door's receipt does not match its signature".into());
+    }
+    Ok(SignedReceipt { receipt, signed })
 }
 
 fn show(vault: &Vault) {

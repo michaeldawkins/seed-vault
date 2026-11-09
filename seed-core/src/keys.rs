@@ -21,7 +21,8 @@ pub trait Signer {
     /// The `did:key` identifier of this key.
     fn did(&self) -> String;
     /// ES256 signature over `message`, as 64 raw bytes (r || s).
-    fn sign(&self, message: &[u8]) -> Vec<u8>;
+    /// A hardware signer can fail (chip locked, helper missing); then nothing is signed.
+    fn sign(&self, message: &[u8]) -> Result<Vec<u8>>;
 }
 
 /// A P-256 key held in memory. Not for long-lived agent or owner keys in real use.
@@ -58,10 +59,101 @@ impl Signer for SoftwareKey {
         did_for(&self.verifying_key())
     }
 
-    fn sign(&self, message: &[u8]) -> Vec<u8> {
+    fn sign(&self, message: &[u8]) -> Result<Vec<u8>> {
         let signature: Signature = self.secret.sign(message);
-        signature.to_bytes().to_vec()
+        Ok(signature.to_bytes().to_vec())
     }
+}
+
+/// A key held outside this process, such as in the Mac's Secure Enclave,
+/// reached through a small helper program that never reveals the private key.
+///
+/// Helper protocol (see `enclave/` in this repository):
+/// - `HELPER public KEY_FILE` prints the public key, base64url of the 65-byte
+///   uncompressed point;
+/// - `HELPER sign KEY_FILE` reads the message on stdin and prints the raw
+///   64-byte ES256 signature as base64url.
+///
+/// `KEY_FILE` holds whatever the helper needs to find its key; for the Secure
+/// Enclave it is a blob only that one chip can use.
+pub struct ExternalSigner {
+    program: std::path::PathBuf,
+    key_file: std::path::PathBuf,
+    did: String,
+}
+
+impl ExternalSigner {
+    pub fn open(
+        program: impl Into<std::path::PathBuf>,
+        key_file: impl Into<std::path::PathBuf>,
+    ) -> Result<Self> {
+        let program = program.into();
+        let key_file = key_file.into();
+        let out = run_helper(&program, &["public".as_ref(), key_file.as_os_str()], None)?;
+        let point = b64::decode(out.trim())?;
+        let key = VerifyingKey::from_sec1_bytes(&point).map_err(|_| {
+            SeedError::Malformed("the key helper returned an invalid public key".into())
+        })?;
+        Ok(ExternalSigner {
+            did: did_for(&key),
+            program,
+            key_file,
+        })
+    }
+}
+
+impl Signer for ExternalSigner {
+    fn did(&self) -> String {
+        self.did.clone()
+    }
+
+    fn sign(&self, message: &[u8]) -> Result<Vec<u8>> {
+        let out = run_helper(
+            &self.program,
+            &["sign".as_ref(), self.key_file.as_os_str()],
+            Some(message),
+        )?;
+        let signature = b64::decode(out.trim())?;
+        // Never hand on a signature the key did not make.
+        verify(&self.did, message, &signature)?;
+        Ok(signature)
+    }
+}
+
+fn run_helper(
+    program: &std::path::Path,
+    args: &[&std::ffi::OsStr],
+    input: Option<&[u8]>,
+) -> Result<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            SeedError::Io(format!(
+                "cannot start key helper {}: {e}",
+                program.display()
+            ))
+        })?;
+    {
+        let mut stdin = child.stdin.take().expect("piped stdin");
+        if let Some(bytes) = input {
+            stdin.write_all(bytes)?;
+        }
+    }
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        return Err(SeedError::Io(format!(
+            "key helper failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|_| SeedError::Malformed("key helper output is not text".into()))
 }
 
 /// The `did:key` for a P-256 public key (compressed point, multicodec 0x1200, base58btc).
@@ -109,7 +201,7 @@ mod tests {
             "P-256 did:key starts with zDn, got {did}"
         );
         assert_eq!(resolve(&did).unwrap(), key.verifying_key());
-        let sig = key.sign(b"hello");
+        let sig = key.sign(b"hello").unwrap();
         verify(&did, b"hello", &sig).unwrap();
         assert!(verify(&did, b"hellO", &sig).is_err());
         let restored = SoftwareKey::from_secret(&key.export_secret()).unwrap();

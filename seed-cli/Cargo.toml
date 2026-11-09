@@ -4,6 +4,7 @@ description = "The standalone Seed Vault command-line holder."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+default-run = "seed"
 
 [[bin]]
 name = "seed"

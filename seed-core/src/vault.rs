@@ -193,6 +193,75 @@ impl Vault {
         Ok(self.agents.last().expect("just pushed"))
     }
 
+    /// Add an agent whose key lives elsewhere (Secure Enclave, TPM, KMS).
+    /// The vault learns only its identifier and never holds its private key.
+    pub fn add_external_agent(
+        &mut self,
+        name: &str,
+        agent_did: &str,
+        built_by: &str,
+        model: &str,
+        machine: &str,
+        now: DateTime<Utc>,
+    ) -> Result<&Agent> {
+        crate::keys::resolve(agent_did)?;
+        if self.agents.iter().any(|a| a.name == name) {
+            return Err(SeedError::Invalid(format!(
+                "there is already an agent called '{name}'"
+            )));
+        }
+        let index = self.take_status_index();
+        let subject = AgentSubject {
+            id: agent_did.into(),
+            name: name.into(),
+            acts_for: self.owner.did.clone(),
+            built_by: built_by.into(),
+            model: model.into(),
+            machine: machine.into(),
+        };
+        let card = Card::new(
+            CardKind::AgentIdentity,
+            &self.owner.did,
+            now,
+            now + Duration::days(365),
+            &subject,
+            Some(StatusEntry::revocation(&self.status_list_url, index)),
+        )?;
+        let identity_card = card.sign(&self.owner_key()?)?;
+        self.agents.push(Agent {
+            name: name.into(),
+            did: agent_did.into(),
+            secret: None,
+            identity_card,
+            identity_status_index: index,
+            mandates: Vec::new(),
+        });
+        Ok(self.agents.last().expect("just pushed"))
+    }
+
+    /// Everything one agent needs to visit doors, and nothing more: its
+    /// identity card and its live mandates. No owner key, no other agents.
+    pub fn export_kit(&self, name: &str, now: DateTime<Utc>) -> Result<AgentKit> {
+        let agent = self.agent(name)?;
+        Ok(AgentKit {
+            format: "seed-agent-kit.v1".into(),
+            agent: agent.name.clone(),
+            agent_did: agent.did.clone(),
+            owner_did: self.owner.did.clone(),
+            identity_card: agent.identity_card.clone(),
+            mandates: agent
+                .mandates
+                .iter()
+                .filter(|m| !m.withdrawn)
+                .map(|m| KitMandate {
+                    id: m.id.clone(),
+                    card: m.card.clone(),
+                })
+                .collect(),
+            exported_at: now,
+        })
+    }
+
     pub fn agent(&self, name: &str) -> Result<&Agent> {
         self.agents
             .iter()
@@ -371,4 +440,80 @@ pub fn working_key_for(
     )?;
     let token = card.sign(agent_key)?;
     Ok((working, token))
+}
+
+/// One mandate inside an agent kit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KitMandate {
+    pub id: String,
+    pub card: String,
+}
+
+/// What travels to the agent's machine: its identity card and live mandates.
+/// It holds no secret at all. The agent key stays in its hardware signer and
+/// the owner key stays in the owner's vault.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentKit {
+    pub format: String,
+    pub agent: String,
+    pub agent_did: String,
+    pub owner_did: String,
+    pub identity_card: String,
+    pub mandates: Vec<KitMandate>,
+    pub exported_at: DateTime<Utc>,
+}
+
+impl AgentKit {
+    /// Find a mandate by its full id or the end of it.
+    pub fn mandate(&self, mandate_id: &str) -> Result<&KitMandate> {
+        self.mandates
+            .iter()
+            .find(|m| m.id == mandate_id || m.id.ends_with(mandate_id))
+            .ok_or_else(|| SeedError::NotFound(format!("no mandate '{mandate_id}' in this kit")))
+    }
+
+    /// Answer a door's challenge with a hardware (or any other) agent signer.
+    pub fn answer(
+        &self,
+        agent_key: &dyn Signer,
+        mandate_id: &str,
+        challenge: &Challenge,
+        request: Request,
+        now: DateTime<Utc>,
+    ) -> Result<String> {
+        if agent_key.did() != self.agent_did {
+            return Err(SeedError::Invalid(format!(
+                "this signer is {}, but the kit belongs to {}",
+                agent_key.did(),
+                self.agent_did
+            )));
+        }
+        let mandate = self.mandate(mandate_id)?;
+        let (key, card) = working_key_for(agent_key, &mandate.id, WORKING_KEY_HOURS, now)?;
+        let cards = vec![card, mandate.card.clone(), self.identity_card.clone()];
+        presentation::present(
+            &key,
+            &challenge.nonce,
+            &challenge.audience,
+            request,
+            cards,
+            now,
+        )
+    }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        std::fs::write(path, serde_json::to_string_pretty(self)?)?;
+        Ok(())
+    }
+
+    pub fn load(path: &Path) -> Result<AgentKit> {
+        let kit: AgentKit = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        if kit.format != "seed-agent-kit.v1" {
+            return Err(SeedError::Malformed(format!(
+                "unknown agent kit format '{}'",
+                kit.format
+            )));
+        }
+        Ok(kit)
+    }
 }

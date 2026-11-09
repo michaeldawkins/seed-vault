@@ -10,22 +10,25 @@ Seed Vault is its own product. It connects to Ledger Desk, or to any other
 receiver, only through the open card format and the handshake. Ledger Desk's
 side lives in `crates/ledger-seed-door` of the Ledger Desk repository.
 
-## Status (08-11-2026)
+## Status (09-11-2026)
 
 | | |
 |---|---|
 | Designed | Yes: see the design docs in the project files (01-11 and 07-11-2026) |
-| Built | `seed-core` library, `seed` command-line holder, reference door |
+| Built | `seed-core` library, `seed` command-line holder, reference door, agent kits and a hardware signer protocol; Secure Enclave helper written in Swift but not yet compiled or run on a Mac |
 | Tested | 17 conformance cases (the 15 from the Slice 0 doc plus 2) pass here and in Ledger Desk's door |
-| Running for real | **No.** Keys are software keys; withdrawal lists are not published anywhere yet |
-| Proven with a real agent | **No.** Needs an agent key in the Mac mini's Secure Enclave and Ledger's MCP door wired to the module |
+| Running for real | **No.** The owner key is still a software key; withdrawal lists are not published anywhere yet |
+| Proven with a real agent | **No.** Needs one run of `enclave/` on the Mac mini against Ledger's door |
 
 ## Pieces
 
 - **seed-core**: card formats, signing (ES256 / P-256), `did:key` identifiers,
   withdrawal lists, presentations, the door's checks, receipts, the vault file
   and the shared conformance cases.
-- **seed-cli**: the `seed` command for owners.
+- **seed-cli**: the `seed` command for owners and agents, plus `seed-soft-enclave`,
+  a software stand-in for the hardware key helper (tests only).
+- **enclave**: `seed-enclave`, the Secure Enclave helper for Macs. See
+  [enclave/README.md](enclave/README.md).
 
 ## Try it
 
@@ -57,9 +60,10 @@ seed status-list --out status.jwt    # publish this file at your list address
 
 ## Not done yet
 
-- Hardware keys: the `Signer` trait is ready for the Secure Enclave, a TPM or a
-  KMS; no such signer is written yet. The vault file holds software keys and is
-  for trying things out only.
+- Hardware keys: agent keys can live behind any helper program that speaks
+  the protocol in `enclave/README.md`; the Secure Enclave helper still needs its
+  first run on a Mac. The owner key is still a software key in the vault file,
+  which is for trying things out only.
 - Owner key recovery through trusted people.
 - Build (attestation) cards.
 - Publishing the withdrawal list at a real address.

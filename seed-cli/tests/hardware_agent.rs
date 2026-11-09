@@ -15,7 +15,12 @@ use seed_core::reference::MemoryStores;
 use seed_core::vault::{AgentKit, MandateTerms, Vault};
 use serde_json::json;
 
-const HELPER: &str = env!("CARGO_BIN_EXE_seed-soft-enclave");
+/// The signing helper under test. Defaults to the software stand-in; on a Mac,
+/// set SEED_TEST_SIGNER to the built `enclave/seed-enclave` to use the real chip.
+fn helper() -> String {
+    std::env::var("SEED_TEST_SIGNER")
+        .unwrap_or_else(|_| env!("CARGO_BIN_EXE_seed-soft-enclave").to_string())
+}
 const SEED: &str = env!("CARGO_BIN_EXE_seed");
 
 fn scratch(name: &str) -> PathBuf {
@@ -30,12 +35,12 @@ fn uuid_ish() -> String {
 
 fn new_hardware_key(dir: &std::path::Path) -> (PathBuf, ExternalSigner) {
     let key_file = dir.join("agent.key");
-    let out = Command::new(HELPER)
+    let out = Command::new(helper())
         .args(["create", key_file.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(out.status.success());
-    let signer = ExternalSigner::open(HELPER, &key_file).unwrap();
+    let signer = ExternalSigner::open(helper(), &key_file).unwrap();
     (key_file, signer)
 }
 
@@ -213,7 +218,7 @@ fn the_cli_adds_a_hardware_agent_and_exports_its_kit() {
     let did = seed(&[
         "key-id",
         "--signer",
-        HELPER,
+        &helper(),
         "--key-file",
         key_file.to_str().unwrap(),
     ]);

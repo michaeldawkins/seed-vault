@@ -1,9 +1,11 @@
 # seed-enclave: the agent key in the Mac's Secure Enclave
 
-**Status: written, not yet run on a Mac.** The Rust side (the signer that
-calls this helper, the agent kit, and the visit) is built and tested with
-`seed-soft-enclave`, a stand-in that speaks the same protocol. The Swift
-helper itself still needs its first run on real hardware.
+**Status: built and tested on real hardware.** On 09-11-2026 it was built
+on Michael's Mac mini (Apple Silicon, macOS 26.5.1, Swift 6.3.2), made a key
+inside the Secure Enclave, and signed with it; the signature checked out
+independently. The three hardware-agent tests passed with the real chip as
+signer (`SEED_TEST_SIGNER=$PWD/enclave/seed-enclave cargo test -p seed-cli
+--test hardware_agent`). Not yet used against a running Ledger Desk door.
 
 ## What it does
 
@@ -59,9 +61,12 @@ Any program can stand in for `seed-enclave` if it speaks this:
 Seed Vault checks every signature against the public key before using it,
 so a helper that signs with the wrong key is caught at once.
 
-## To verify on first run
+## Verified on first run (09-11-2026)
 
 - CryptoKit Secure Enclave keys work from an unsigned command-line tool,
   without extra entitlements.
-- `AfterFirstUnlockThisDeviceOnly` lets an unattended agent sign after the
-  Mac has been unlocked once since start-up.
+
+## Still to verify
+
+- `AfterFirstUnlockThisDeviceOnly` lets an unattended agent sign after a
+  restart, once the Mac has been unlocked.

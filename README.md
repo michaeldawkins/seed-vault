@@ -15,10 +15,10 @@ side lives in `crates/ledger-seed-door` of the Ledger Desk repository.
 | | |
 |---|---|
 | Designed | Yes: see the design docs in the project files (01-11 and 07-11-2026) |
-| Built | `seed-core` library, `seed` command-line holder, reference door, agent kits and a hardware signer protocol; Secure Enclave helper written in Swift but not yet compiled or run on a Mac |
+| Built | `seed-core` library, `seed` command-line holder, reference door, agent kits, and a Secure Enclave helper that signs with the Mac mini's chip (tested on the mini 09-11-2026) |
 | Tested | 17 conformance cases (the 15 from the Slice 0 doc plus 2) pass here and in Ledger Desk's door |
 | Running for real | **No.** The owner key is still a software key; withdrawal lists are not published anywhere yet |
-| Proven with a real agent | **No.** Needs one run of `enclave/` on the Mac mini against Ledger's door |
+| Proven with a real agent | **Partly.** The chip signs and the tests pass with it; a live visit to a running Ledger Desk door is still to do |
 
 ## Pieces
 
@@ -61,8 +61,8 @@ seed status-list --out status.jwt    # publish this file at your list address
 ## Not done yet
 
 - Hardware keys: agent keys can live behind any helper program that speaks
-  the protocol in `enclave/README.md`; the Secure Enclave helper still needs its
-  first run on a Mac. The owner key is still a software key in the vault file,
+  the protocol in `enclave/README.md`; the Secure Enclave helper works on the
+  Mac mini. The owner key is still a software key in the vault file,
   which is for trying things out only.
 - Owner key recovery through trusted people.
 - Build (attestation) cards.

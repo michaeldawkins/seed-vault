@@ -10,6 +10,10 @@ Seed Vault is its own product. It connects to Ledger Desk, or to any other
 receiver, only through the open card format and the handshake. Ledger Desk's
 side lives in `crates/ledger-seed-door` of the Ledger Desk repository.
 
+## Part of the Perspect-IF ecosystem
+
+Seed Vault stands on its own as a product, and it is also one working piece of the Perspect-IF vision: people stay sovereign over their own data and agents. The hub that ties all the projects together, with the guiding vision and a map of every repository, lives in [perspect-if](https://github.com/michaeldawkins/perspect-if) (private).
+
 ## Status (09-11-2026)
 
 | | |
